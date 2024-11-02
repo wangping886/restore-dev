@@ -77,7 +77,7 @@ class GFPGANer():
         # initialize face helper
         self.face_helper = FaceRestoreHelper(
             upscale,
-            face_size=1024,
+            face_size=512,
             crop_ratio=(1, 1),
             det_model='retinaface_resnet50',
             save_ext='png',
@@ -112,7 +112,7 @@ class GFPGANer():
             # align and warp each face
             self.face_helper.align_warp_face()
 
-        mynet = GPEN(model_path="/Users/peter/python/src/Real-ESRGAN/experiments/pretrained_models/GPEN-BFR-1024.onnx", device='cuda' if torch.cuda.is_available() else 'cpu')
+        mynet = GPEN(model_path="/Users/peter/python/src/Real-ESRGAN/experiments/pretrained_models/GPEN-BFR-512.onnx", device='cuda' if torch.cuda.is_available() else 'cpu')
         if len(self.face_helper.cropped_faces) > 3:
             print("faces", len(self.face_helper.cropped_faces))
 
@@ -125,15 +125,15 @@ class GFPGANer():
             normalize(cropped_face_t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
             cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
 
-            # try:
-            #     output = self.gfpgan(cropped_face_t, return_rgb=False)[0]
-            #     # convert to image
-            #     restored_face = tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
-            # except RuntimeError as error:
-            #     print(f'\tFailed inference for GFPGAN: {error}.')
-            #     restored_face = cropped_face
+            try:
+                output = self.gfpgan(cropped_face_t, return_rgb=False)[0]
+                # convert to image
+                restored_face = tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
+            except RuntimeError as error:
+                print(f'\tFailed inference for GFPGAN: {error}.')
+                restored_face = cropped_face
 
-            restored_face = mynet.enhance(cropped_face)
+            #restored_face = mynet.enhance(cropped_face)
             save_path = 'results/gpen/dd.jpg'  # 例如 'output.jpg'
             cv2.imwrite(save_path, restored_face)
             restored_face = restored_face.astype('uint8')
