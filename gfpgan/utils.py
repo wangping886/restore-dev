@@ -1,5 +1,7 @@
+import time
 import cv2
 import os
+from spandrel import ModelLoader
 import torch
 from basicsr.utils import img2tensor, tensor2img
 from basicsr.utils.download_util import load_file_from_url
@@ -9,12 +11,35 @@ from torchvision.transforms.functional import normalize
 from gfpgan.archs.gfpgan_bilinear_arch import GFPGANBilinear
 from gfpgan.archs.gfpganv1_arch import GFPGANv1
 from gfpgan.archs.gfpganv1_clean_arch import GFPGANv1Clean
-from openvino.runtime import Core  ###pip install openvino-dev[ONNX]==2023.0.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
 import numpy as np
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from imaginairy.vendored.codeformer.codeformer_arch import CodeFormer
 
+
+codeformer_model = None
+# 加载 CodeFormer 模型权重
+def load_codeformer_model():
+    global codeformer_model
+    if codeformer_model ==None:
+        print("Loading CodeFormer model...",int(time.mktime(time.localtime(time.time()))))
+        model = CodeFormer(
+            dim_embd=512,
+            codebook_size=1024,
+            n_head=8,
+            n_layers=9,
+            connect_list=["32", "64", "128", "256"],
+        ).to('cpu')
+        ckpt_path = "/Users/peter/python/src/Real-ESRGAN/experiments/pretrained_models/codeformer.pth"
+
+        checkpoint = torch.load(ckpt_path)["params_ema"]
+        model.load_state_dict(checkpoint)
+        model.eval()
+        print("Loading2 CodeFormer model...",int(time.mktime(time.localtime(time.time()))))
+        codeformer_model=model
+        return codeformer_model
+    return codeformer_model
 class GFPGANer():
     """Helper for restoration with GFPGAN.
 
@@ -112,9 +137,9 @@ class GFPGANer():
             # align and warp each face
             self.face_helper.align_warp_face()
 
-        mynet = GPEN(model_path="/Users/peter/python/src/Real-ESRGAN/experiments/pretrained_models/GPEN-BFR-512.onnx", device='cuda' if torch.cuda.is_available() else 'cpu')
-        if len(self.face_helper.cropped_faces) > 3:
-            print("faces", len(self.face_helper.cropped_faces))
+        # mynet = GPEN(model_path="/Users/peter/python/src/Real-ESRGAN/experiments/pretrained_models/GPEN-BFR-512.onnx", device='cuda' if torch.cuda.is_available() else 'cpu')
+        # if len(self.face_helper.cropped_faces) > 3:
+        #     print("faces", len(self.face_helper.cropped_faces))
 
         # face restoration
         for cropped_face in self.face_helper.cropped_faces:
@@ -126,7 +151,9 @@ class GFPGANer():
             cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
 
             try:
-                output = self.gfpgan(cropped_face_t, return_rgb=False)[0]
+                net = load_codeformer_model()
+                # send it to the GPU and put it in inference mode
+                output = net(cropped_face_t, w=1, adain=True)[0]
                 # convert to image
                 restored_face = tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
             except RuntimeError as error:
@@ -156,28 +183,7 @@ class GFPGANer():
             return self.face_helper.cropped_faces, self.face_helper.restored_faces, None
 
 
-class GPEN:
-    def __init__(self, model_path="GPEN-BFR-512.onnx", device='cpu'):
-        ie = Core()
-        model = ie.read_model(model_path)
-        self.net = ie.compile_model(model=model, device_name=device.upper())
-        _, _, self.input_height, self.input_width = tuple(self.net.inputs[0].shape)
 
-    def preprocess(self, img):
-        img = cv2.resize(img, (self.input_width, self.input_height), interpolation=cv2.INTER_LINEAR)
-        img = img.astype(np.float32)[:,:,::-1] / 255.0
-        img = img.transpose((2, 0, 1))
-        img = (img - 0.5) / 0.5
-        img = np.expand_dims(img, axis=0).astype(np.float32)
-        return img
-
-    def postprocess(self, img):
-        img = (img.transpose(1,2,0).clip(-1,1) + 1) * 0.5
-        img = (img * 255)[:,:,::-1]
-        img = img.clip(0, 255).astype('uint8')
-        return img
-
-    def enhance(self, img):
         img = self.preprocess(img)
         output = self.net(img)[0][0]
         output = self.postprocess(output)
